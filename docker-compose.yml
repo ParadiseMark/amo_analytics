@@ -1,0 +1,126 @@
+version: "3.9"
+
+# PostgreSQL — Supabase (managed, не в compose)
+# Этот compose запускает: Redis, ClickHouse, Backend, Frontend, Nginx
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: amo_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secret}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secret}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: amo_clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-amo}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-ch_secret}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-amo_analytics}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse-config:/etc/clickhouse-server/config.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: amo_backend
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secret}
+      CLICKHOUSE_HOST: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-amo}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-ch_secret}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-amo_analytics}
+      PORT: 3000
+      HOST: 0.0.0.0
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.yourdomain.com}
+    container_name: amo_frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    image: nginx:alpine
+    container_name: amo_nginx
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_conf:/etc/letsencrypt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t && wget -qO- http://localhost/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  certbot:
+    image: certbot/certbot
+    container_name: amo_certbot
+    volumes:
+      - certbot_www:/var/www/certbot
+      - certbot_conf:/etc/letsencrypt
+    profiles:
+      - certbot
+    entrypoint: >
+      sh -c "certbot certonly --webroot -w /var/www/certbot
+        --email ${CERTBOT_EMAIL} --agree-tos --no-eff-email
+        -d ${DOMAIN} -d api.${DOMAIN}"
+
+volumes:
+  redis_data:
+  clickhouse_data:
+  certbot_www:
+  certbot_conf:
