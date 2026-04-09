@@ -7,6 +7,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: amo_redis
+    mem_limit: 256m
+    memswap_limit: 256m
     restart: unless-stopped
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secret}
     volumes:
@@ -20,6 +22,8 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
     container_name: amo_clickhouse
+    mem_limit: 1g
+    memswap_limit: 1g
     restart: unless-stopped
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-amo}
@@ -35,10 +39,10 @@ services:
       retries: 15
 
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
+    image: ghcr.io/paradisemark/amo-analytics/backend:latest
     container_name: amo_backend
+    mem_limit: 512m
+    memswap_limit: 768m
     restart: unless-stopped
     depends_on:
       redis:
@@ -59,26 +63,25 @@ services:
       PORT: 3000
       HOST: 0.0.0.0
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.frontend
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.yourdomain.com}
+    image: ghcr.io/paradisemark/amo-analytics/frontend:latest
     container_name: amo_frontend
+    mem_limit: 512m
+    memswap_limit: 768m
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
     environment:
       NODE_ENV: production
+      HOSTNAME: 0.0.0.0
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -86,6 +89,8 @@ services:
   nginx:
     image: nginx:alpine
     container_name: amo_nginx
+    mem_limit: 64m
+    memswap_limit: 64m
     restart: unless-stopped
     depends_on:
       backend:
@@ -101,7 +106,7 @@ services:
       - certbot_www:/var/www/certbot:ro
       - certbot_conf:/etc/letsencrypt:ro
     healthcheck:
-      test: ["CMD-SHELL", "nginx -t && wget -qO- http://localhost/health || exit 1"]
+      test: ["CMD-SHELL", "nginx -t"]
       interval: 10s
       timeout: 5s
       retries: 3
