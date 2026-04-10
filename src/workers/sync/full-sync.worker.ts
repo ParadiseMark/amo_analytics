@@ -176,22 +176,22 @@ async function processJob(job: import("bullmq").Job<FullSyncJobData>) {
       await syncCustomFields(accountId, client);
 
       await job.updateProgress(35);
-      await syncDeals(accountId, client);
+      await syncSafe(() => syncDeals(accountId, client), "deals");
 
       await job.updateProgress(55);
-      await syncContacts(accountId, client);
+      await syncSafe(() => syncContacts(accountId, client), "contacts");
 
       await job.updateProgress(65);
-      await syncCompanies(accountId, client);
+      await syncSafe(() => syncCompanies(accountId, client), "companies");
 
       await job.updateProgress(72);
-      await syncTasks(accountId, client);
+      await syncSafe(() => syncTasks(accountId, client), "tasks");
 
       await job.updateProgress(80);
-      await syncNotes(accountId, client);
+      await syncSafe(() => syncNotes(accountId, client), "notes");
 
       await job.updateProgress(90);
-      await syncEvents(accountId, client);
+      await syncSafe(() => syncEvents(accountId, client), "events");
 
       await db
         .update(accounts)
@@ -223,6 +223,21 @@ async function processJob(job: import("bullmq").Job<FullSyncJobData>) {
         .where(eq(accounts.id, accountId));
       throw err;
     }
+}
+
+// ─── Helper: ignore 404 from AmoCRM (empty account has no data) ──────────────
+
+async function syncSafe(fn: () => Promise<void>, name: string): Promise<void> {
+  try {
+    await fn();
+  } catch (err: any) {
+    const status = err?.response?.status ?? err?.status;
+    if (status === 404) {
+      console.log(`[full-sync] ${name}: no data (404) — skipping`);
+    } else {
+      throw err;
+    }
+  }
 }
 
 // ─── Sync functions ───────────────────────────────────────────────────────────

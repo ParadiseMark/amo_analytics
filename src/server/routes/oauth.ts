@@ -17,14 +17,21 @@ const STATE_TTL = 600; // 10 минут
 export async function oauthRoutes(app: FastifyInstance) {
   // ─── Step 1: Start OAuth flow ─────────────────────────────────────────────
   // GET /api/v1/oauth/start  (требует JWT — чтобы знать кто подключает)
-  app.get("/start", async (req, reply) => {
+  app.get<{ Querystring: { token?: string } }>("/start", async (req, reply) => {
     // Проверяем JWT чтобы привязать аккаунт к пользователю в callback
     let userId: string | null = null;
     try {
       await req.jwtVerify();
       userId = (req.user as { sub: string }).sub;
     } catch {
-      // Разрешаем без JWT — callback создаст аккаунт без привязки
+      // Fallback: токен может прийти как query-параметр (browser redirect не поддерживает заголовки)
+      const queryToken = req.query.token;
+      if (queryToken) {
+        try {
+          const decoded = app.jwt.verify(queryToken) as { sub: string };
+          userId = decoded.sub;
+        } catch { /* невалидный токен — продолжаем без привязки */ }
+      }
     }
 
     const state = generateState();

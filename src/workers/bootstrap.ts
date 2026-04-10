@@ -24,10 +24,11 @@ export async function bootstrapAllWorkers(): Promise<void> {
   // Просто импортом запускается (Worker инициализируется при импорте)
   void webhookProcessWorker;
 
+  const { ne } = await import("drizzle-orm");
   const activeAccounts = await db
     .select({ id: accounts.id })
     .from(accounts)
-    .where(eq(accounts.syncStatus, "ready"));
+    .where(ne(accounts.syncStatus, "disconnected"));
 
   for (const { id } of activeAccounts) {
     startWorkersForAccount(id);

@@ -191,8 +191,8 @@ export class AmoClient {
         });
       } catch (err) {
         const axiosErr = err as AxiosError;
-        // 204 = no content / empty result
-        if (axiosErr.response?.status === 204) break;
+        // 204 = no content, 404 = no records of this type — treat both as empty
+        if (axiosErr.response?.status === 204 || axiosErr.response?.status === 404) break;
         throw err;
       }
 
