@@ -68,22 +68,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         email: z.string().email(),
         password: z.string().min(8),
         name: z.string().min(1).max(255),
-        // Admin invite token for restricted registration
-        inviteToken: z.string().optional(),
       })
       .parse(req.body);
 
     // Check if any users exist; first user becomes admin automatically
     const existing = await db.query.platformUsers.findFirst();
     const isFirstUser = !existing;
-
-    // For non-first users, require invite token (simple shared secret)
-    if (!isFirstUser) {
-      const expectedToken = process.env.INVITE_TOKEN;
-      if (!expectedToken || body.inviteToken !== expectedToken) {
-        return reply.code(403).send({ error: "Valid invite token required" });
-      }
-    }
 
     // Check email uniqueness
     const duplicate = await db.query.platformUsers.findFirst({

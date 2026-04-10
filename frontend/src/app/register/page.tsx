@@ -9,7 +9,6 @@ export default function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [inviteToken, setInviteToken] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -19,13 +18,10 @@ export default function RegisterPage() {
     setError("");
 
     try {
-      const body: Record<string, string> = { name, email, password };
-      if (inviteToken.trim()) body.inviteToken = inviteToken.trim();
-
       const res = await fetch("/api/v1/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ name, email, password }),
       });
 
       if (!res.ok) {
@@ -92,20 +88,6 @@ export default function RegisterPage() {
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
               placeholder="Минимум 8 символов"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Инвайт-код{" "}
-              <span className="text-gray-400 font-normal">(если не первый пользователь)</span>
-            </label>
-            <input
-              type="text"
-              value={inviteToken}
-              onChange={(e) => setInviteToken(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-              placeholder="Необязательно"
             />
           </div>
 
