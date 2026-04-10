@@ -6,10 +6,6 @@ export const ch = createClient({
   username: env.CLICKHOUSE_USER,
   password: env.CLICKHOUSE_PASSWORD,
   database: env.CLICKHOUSE_DB,
-  clickhouse_settings: {
-    async_insert: 1,
-    wait_for_async_insert: 0,
-  },
 });
 
 export async function checkClickHouseConnection(): Promise<void> {
@@ -27,7 +23,12 @@ export async function insert<T extends Record<string, unknown>>(
   values: T[]
 ): Promise<void> {
   if (values.length === 0) return;
-  await ch.insert({ table, values, format: "JSONEachRow" });
+  await ch.insert({
+    table,
+    values,
+    format: "JSONEachRow",
+    clickhouse_settings: { async_insert: 1, wait_for_async_insert: 0 },
+  });
 }
 
 // Helper: query rows
