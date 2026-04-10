@@ -16,9 +16,9 @@ export async function checkClickHouseConnection(): Promise<void> {
   await ch.ping();
 }
 
-// Helper: execute DDL
+// Helper: execute DDL (uses command() which properly handles empty DDL responses)
 export async function exec(query: string): Promise<void> {
-  await ch.exec({ query });
+  await ch.command({ query });
 }
 
 // Helper: insert rows
