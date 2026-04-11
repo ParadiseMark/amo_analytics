@@ -77,8 +77,19 @@ export default function SettingsPage() {
     },
   });
 
+  const isSyncing = settings?.syncStatus === "syncing" || syncMutation.isPending;
+
   const syncMutation = useMutation({
     mutationFn: () => api.post(`/accounts/${accountId}/sync/trigger`, {}),
+    onSuccess: () => {
+      // Poll settings every 5s until sync completes
+      const interval = setInterval(() => {
+        qc.invalidateQueries({ queryKey: ["account-settings", accountId] });
+        qc.invalidateQueries({ queryKey: ["me"] });
+      }, 5000);
+      // Stop polling after 30 minutes max
+      setTimeout(() => clearInterval(interval), 30 * 60 * 1000);
+    },
   });
 
   function handleSave() {
@@ -139,11 +150,11 @@ export default function SettingsPage() {
         {isAdmin && (
           <button
             onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-            className="flex items-center gap-2 text-sm text-brand-600 hover:text-brand-700 font-medium mt-1"
+            disabled={isSyncing}
+            className="flex items-center gap-2 text-sm font-medium mt-1 disabled:opacity-50 disabled:cursor-not-allowed text-brand-600 hover:text-brand-700 disabled:hover:text-brand-600"
           >
-            <RefreshCw className={`w-4 h-4 ${syncMutation.isPending ? "animate-spin" : ""}`} />
-            {syncMutation.isPending ? "Запускается..." : "Запустить полную синхронизацию"}
+            <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin" : ""}`} />
+            {isSyncing ? "Синхронизация идёт..." : "Запустить полную синхронизацию"}
           </button>
         )}
       </div>
