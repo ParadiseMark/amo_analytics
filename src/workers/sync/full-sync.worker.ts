@@ -22,6 +22,7 @@ import { updateSyncCursor, unixToDate, getMaxUpdatedAt, toEntityType } from "./s
 import { enqueueMetricsCompute } from "../../lib/queue/queues.js";
 import type { FullSyncJobData, IncrementalSyncJobData } from "../../lib/queue/queues.js";
 import { triggerIncrementalSync } from "../scheduler/scheduler.js";
+import { runReconciliation } from "./reconciliation.worker.js";
 import type {
   AmoUser,
   AmoPipeline,
@@ -50,6 +51,9 @@ export function createSyncWorker(accountId: string): Worker<FullSyncJobData | In
       }
       if (job.name === "incremental-sync") {
         return processIncrementalJob(job as import("bullmq").Job<IncrementalSyncJobData>);
+      }
+      if (job.name === "nightly-reconciliation") {
+        return runReconciliation(job.data.accountId);
       }
       return processJob(job as import("bullmq").Job<FullSyncJobData>);
     },
