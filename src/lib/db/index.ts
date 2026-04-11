@@ -10,8 +10,11 @@ const { Pool } = pg;
 const pool = new Pool({
   connectionString: env.DATABASE_URL,
   max: 10,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 10_000,
+  idleTimeoutMillis: 600_000,       // 10 min — don't drop idle connections too fast
+  connectionTimeoutMillis: 15_000,
+  // TCP keepalive — prevents Supabase/load-balancer from silently dropping long-running connections
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
   ssl: env.DATABASE_URL.includes("supabase.co") || env.DATABASE_URL.includes("sslmode=require")
     ? { rejectUnauthorized: false }
     : false,

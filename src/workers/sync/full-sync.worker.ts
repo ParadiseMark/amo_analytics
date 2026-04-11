@@ -18,7 +18,9 @@ import {
   dealEvents,
 } from "../../lib/db/schema.js";
 import { getAmoClient } from "../../services/amo-client/AmoClient.js";
-import { updateSyncCursor, unixToDate, getMaxUpdatedAt, toEntityType } from "./sync.utils.js";
+import { updateSyncCursor, unixToDate, getMaxUpdatedAt, toEntityType, type EntityType } from "./sync.utils.js";
+import { syncCursors } from "../../lib/db/schema.js";
+import { and } from "drizzle-orm";
 import { enqueueMetricsCompute } from "../../lib/queue/queues.js";
 import type { FullSyncJobData, IncrementalSyncJobData } from "../../lib/queue/queues.js";
 import { triggerIncrementalSync } from "../scheduler/scheduler.js";
@@ -57,11 +59,19 @@ export function createSyncWorker(accountId: string): Worker<FullSyncJobData | In
       }
       return processJob(job as import("bullmq").Job<FullSyncJobData>);
     },
-    { connection: redis, concurrency: WORKER_CONCURRENCY, stalledInterval: 300_000, lockDuration: 600_000 }
+    { connection: redis, concurrency: WORKER_CONCURRENCY, stalledInterval: 300_000, lockDuration: 3_600_000 }
   );
 
-  worker.on("failed", (job, err) => {
+  worker.on("failed", async (job, err) => {
     console.error(`[sync:${accountId}] Job ${job?.id} (${job?.name}) failed:`, err.message);
+    if (job?.name === "full-sync") {
+      await db.update(accounts).set({ syncStatus: "error" }).where(eq(accounts.id, accountId));
+    }
+  });
+
+  worker.on("stalled", async (jobId) => {
+    console.error(`[sync:${accountId}] Job ${jobId} stalled`);
+    await db.update(accounts).set({ syncStatus: "error" }).where(eq(accounts.id, accountId));
   });
 
   workers.set(accountId, worker);
@@ -135,7 +145,7 @@ async function processIncrementalJob(job: import("bullmq").Job<IncrementalSyncJo
   if (entityType === "tasks") {
     let count = 0;
     let maxUpdatedAt = fromTimestamp;
-    for await (const batch of client.getTasks({ "filter[updated_at][from]": fromTimestamp })) {
+    for await (const batch of client.getTasks({ "filter[updated_at][from]": fromTimestamp, "filter[is_completed]": 0 })) {
       await db.insert(tasks).values(batch.map((t) => ({
         accountId, amoId: t.id, entityType: toEntityType(t.entity_type), entityAmoId: t.entity_id,
         responsibleUserAmoId: t.responsible_user_id, taskTypeId: t.task_type_id, text: t.text ?? null,
@@ -158,11 +168,37 @@ async function processIncrementalJob(job: import("bullmq").Job<IncrementalSyncJo
   }
 }
 
+/** Returns the set of entity types already completed in the current job run. */
+async function getSyncedEntities(accountId: string, jobStartedAt: Date): Promise<Set<EntityType>> {
+  const cursors = await db
+    .select({ entityType: syncCursors.entityType, lastSyncedAt: syncCursors.lastSyncedAt })
+    .from(syncCursors)
+    .where(and(eq(syncCursors.accountId, accountId)));
+
+  const done = new Set<EntityType>();
+  for (const c of cursors) {
+    if (c.lastSyncedAt && c.lastSyncedAt >= jobStartedAt) {
+      done.add(c.entityType as EntityType);
+    }
+  }
+  return done;
+}
+
 async function processJob(job: import("bullmq").Job<FullSyncJobData>) {
     const { accountId, subdomain } = job.data;
     const client = getAmoClient(accountId, subdomain);
 
-    console.log(`[full-sync] Starting for account ${subdomain} (${accountId})`);
+    // Job creation time — used to detect which entities were already synced in this run.
+    // If a cursor's lastSyncedAt >= jobStartedAt, the entity completed and can be skipped on retry.
+    const jobStartedAt = new Date(job.timestamp);
+
+    const synced = await getSyncedEntities(accountId, jobStartedAt);
+
+    if (synced.size > 0) {
+      console.log(`[full-sync] Resuming ${subdomain} — already done: ${[...synced].join(", ")}`);
+    } else {
+      console.log(`[full-sync] Starting for account ${subdomain} (${accountId})`);
+    }
 
     await db
       .update(accounts)
@@ -171,31 +207,34 @@ async function processJob(job: import("bullmq").Job<FullSyncJobData>) {
 
     try {
       await job.updateProgress(5);
-      await syncUsers(accountId, client);
+      if (!synced.has("users")) await syncUsers(accountId, client);
 
       await job.updateProgress(15);
-      await syncPipelines(accountId, client);
+      if (!synced.has("pipelines")) await syncPipelines(accountId, client);
 
       await job.updateProgress(25);
-      await syncCustomFields(accountId, client);
+      if (!synced.has("custom_fields")) await syncCustomFields(accountId, client);
 
       await job.updateProgress(35);
-      await syncSafe(() => syncDeals(accountId, client), "deals");
+      // Deals must come first (pipeline/stage FKs needed), then parallel batch
+      if (!synced.has("leads")) {
+        await syncSafe(() => syncDeals(accountId, client), "deals");
+      }
 
-      await job.updateProgress(55);
-      await syncSafe(() => syncContacts(accountId, client), "contacts");
-
-      await job.updateProgress(65);
-      await syncSafe(() => syncCompanies(accountId, client), "companies");
-
-      await job.updateProgress(72);
-      await syncSafe(() => syncTasks(accountId, client), "tasks");
+      await job.updateProgress(50);
+      // Contacts, companies, tasks are independent — run in parallel (shared rate limiter)
+      await Promise.all([
+        synced.has("contacts") ? Promise.resolve() : syncSafe(() => syncContacts(accountId, client), "contacts"),
+        synced.has("companies") ? Promise.resolve() : syncSafe(() => syncCompanies(accountId, client), "companies"),
+        synced.has("tasks") ? Promise.resolve() : syncSafe(() => syncTasks(accountId, client), "tasks"),
+      ]);
 
       await job.updateProgress(80);
-      await syncSafe(() => syncNotes(accountId, client), "notes");
-
-      await job.updateProgress(90);
-      await syncSafe(() => syncEvents(accountId, client), "events");
+      // Notes and events also independent — run in parallel
+      await Promise.all([
+        synced.has("notes") ? Promise.resolve() : syncSafe(() => syncNotes(accountId, client), "notes"),
+        synced.has("events") ? Promise.resolve() : syncSafe(() => syncEvents(accountId, client), "events"),
+      ]);
 
       await db
         .update(accounts)
@@ -512,7 +551,9 @@ async function syncTasks(accountId: string, client: ReturnType<typeof getAmoClie
   let count = 0;
   let maxUpdatedAt = 0;
 
-  for await (const batch of client.getTasks()) {
+  // Only sync active (incomplete) tasks — completed tasks are frozen and won't change.
+  // This reduces 418k → ~17k records (96% faster).
+  for await (const batch of client.getTasks({ "filter[is_completed]": 0 })) {
     const items: AmoTask[] = batch;
     await db
       .insert(tasks)
@@ -544,6 +585,7 @@ async function syncTasks(accountId: string, client: ReturnType<typeof getAmoClie
     const batchMax = getMaxUpdatedAt(items);
     if (batchMax > maxUpdatedAt) maxUpdatedAt = batchMax;
     count += items.length;
+    if (count % 5000 === 0) console.log(`[sync:tasks] ${count}...`);
   }
 
   await updateSyncCursor(accountId, "tasks", maxUpdatedAt, count);
@@ -553,36 +595,37 @@ async function syncTasks(accountId: string, client: ReturnType<typeof getAmoClie
 async function syncNotes(accountId: string, client: ReturnType<typeof getAmoClient>) {
   let count = 0;
 
-  for (const entityType of ["leads", "contacts"] as const) {
-    for await (const batch of client.getNotes(entityType)) {
-      const items: AmoNote[] = batch;
-      await db
-        .insert(notes)
-        .values(
-          items.map((n) => ({
-            accountId,
-            amoId: n.id,
-            entityType: toEntityType(n.entity_type),
-            entityAmoId: n.entity_id,
-            responsibleUserAmoId: n.responsible_user_id,
-            noteType: n.note_type as any,
-            content: n.params,
-            textContent: extractNoteText(n),
-            createdAt: unixToDate(n.created_at),
-            updatedAt: unixToDate(n.updated_at),
-          }))
-        )
-        .onConflictDoUpdate({
-          target: [notes.accountId, notes.amoId],
-          set: {
-            content: sql`excluded.content`,
-            textContent: sql`excluded.text_content`,
-            updatedAt: sql`excluded.updated_at`,
-            syncedAt: new Date(),
-          },
-        });
-      count += items.length;
-    }
+  // Only sync lead notes in initial sync — contact notes are lower priority
+  // and 52k contacts can have 100k+ notes (too slow for initial load).
+  for await (const batch of client.getNotes("leads")) {
+    const items: AmoNote[] = batch;
+    await db
+      .insert(notes)
+      .values(
+        items.map((n) => ({
+          accountId,
+          amoId: n.id,
+          entityType: toEntityType(n.entity_type),
+          entityAmoId: n.entity_id,
+          responsibleUserAmoId: n.responsible_user_id,
+          noteType: toNoteType(n.note_type),
+          content: n.params,
+          textContent: extractNoteText(n),
+          createdAt: unixToDate(n.created_at),
+          updatedAt: unixToDate(n.updated_at),
+        }))
+      )
+      .onConflictDoUpdate({
+        target: [notes.accountId, notes.amoId],
+        set: {
+          content: sql`excluded.content`,
+          textContent: sql`excluded.text_content`,
+          updatedAt: sql`excluded.updated_at`,
+          syncedAt: new Date(),
+        },
+      });
+    count += items.length;
+    if (count % 5000 === 0) console.log(`[sync:notes] ${count}...`);
   }
 
   await updateSyncCursor(accountId, "notes", Math.floor(Date.now() / 1000), count);
@@ -592,10 +635,14 @@ async function syncNotes(accountId: string, client: ReturnType<typeof getAmoClie
 async function syncEvents(accountId: string, client: ReturnType<typeof getAmoClient>) {
   let count = 0;
 
-  for await (const batch of client.getEvents()) {
+  // Limit initial sync to last 6 months — older history can be fetched later
+  // if needed. A full history of a large account can be 1M+ events.
+  const sixMonthsAgo = Math.floor(Date.now() / 1000) - 6 * 30 * 24 * 3600;
+
+  for await (const batch of client.getEvents({ "filter[created_at][from]": sixMonthsAgo })) {
     const items: AmoEvent[] = batch;
     const eventRows = items
-      .filter((e) => e.entity_type === "leads")
+      .filter((e) => e.entity_type === "lead" || e.entity_type === "leads")
       .map((e) => ({
         accountId,
         dealAmoId: e.entity_id,
@@ -610,10 +657,23 @@ async function syncEvents(accountId: string, client: ReturnType<typeof getAmoCli
       await db.insert(dealEvents).values(eventRows).onConflictDoNothing();
     }
     count += items.length;
+    if (count % 5000 === 0) console.log(`[sync:events] ${count}...`);
   }
 
   await updateSyncCursor(accountId, "events", Math.floor(Date.now() / 1000), count);
   console.log(`[sync:events] Total: ${count}`);
+}
+
+const KNOWN_NOTE_TYPES = new Set([
+  "common", "call_in", "call_out", "service_message", "message_cashier",
+  "extended_service_message", "geolocation_message", "invoice_message",
+  "ai_activity", "mail_message",
+]);
+
+type NoteTypeValue = "common" | "call_in" | "call_out" | "service_message" | "message_cashier" | "extended_service_message" | "geolocation_message" | "invoice_message" | "ai_activity" | "mail_message";
+
+function toNoteType(raw: string | undefined): NoteTypeValue {
+  return (raw && KNOWN_NOTE_TYPES.has(raw) ? raw : "common") as NoteTypeValue;
 }
 
 function extractNoteText(note: AmoNote): string | null {

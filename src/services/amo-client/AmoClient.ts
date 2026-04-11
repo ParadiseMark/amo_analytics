@@ -23,7 +23,7 @@ import type {
   AmoPage,
 } from "./types.js";
 
-const RATE_LIMIT_RPS = 4; // 4 req/sec (hard limit is 7, we leave buffer)
+const RATE_LIMIT_RPS = 6; // 6 req/sec (hard limit is 7, leave 1 for webhooks)
 const RATE_WINDOW_MS = 1000;
 const MAX_PAGE_SIZE = 250;
 
@@ -69,7 +69,7 @@ export class AmoClient {
     this.subdomain = subdomain;
     this.http = axios.create({
       baseURL: `https://${subdomain}.amocrm.ru/api/v4`,
-      timeout: 30_000,
+      timeout: 60_000,
       headers: { "Content-Type": "application/json" },
     });
   }
@@ -159,6 +159,20 @@ export class AmoClient {
         if (status === 504 && attempt < retries) {
           // Gateway timeout — retry
           await sleep(2000);
+          continue;
+        }
+
+        // Network-level errors (socket hang up, ECONNRESET, ETIMEDOUT) — retry with backoff
+        const isNetworkError = !status && (
+          axiosErr.code === "ECONNRESET" ||
+          axiosErr.code === "ECONNABORTED" ||
+          axiosErr.code === "ETIMEDOUT" ||
+          axiosErr.message?.includes("socket hang up")
+        );
+        if (isNetworkError && attempt < retries) {
+          const delay = Math.pow(2, attempt + 1) * 1000;
+          console.warn(`[amo-client] Network error (${axiosErr.code ?? axiosErr.message}), retry ${attempt + 1}/${retries} in ${delay}ms`);
+          await sleep(delay);
           continue;
         }
 
