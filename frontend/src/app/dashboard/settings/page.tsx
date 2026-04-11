@@ -77,8 +77,6 @@ export default function SettingsPage() {
     },
   });
 
-  const isSyncing = settings?.syncStatus === "syncing" || syncMutation.isPending;
-
   const syncMutation = useMutation({
     mutationFn: () => api.post(`/accounts/${accountId}/sync/trigger`, {}),
     onSuccess: () => {
@@ -91,6 +89,8 @@ export default function SettingsPage() {
       setTimeout(() => clearInterval(interval), 30 * 60 * 1000);
     },
   });
+
+  const isSyncing = settings?.syncStatus === "syncing" || syncMutation.isPending;
 
   function handleSave() {
     const targets: Record<string, number> = {};
