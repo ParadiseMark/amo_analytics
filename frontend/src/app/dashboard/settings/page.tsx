@@ -110,21 +110,13 @@ export default function SettingsPage() {
     <div className="p-6 space-y-6 max-w-2xl">
       <h1 className="text-xl font-bold text-gray-900">Настройки</h1>
 
-      {/* Token warning */}
-      {(settings.needsReauth || settings.tokenDaysLeft < 14) && (
-        <div className={`flex items-start gap-3 p-4 rounded-xl border ${
-          settings.needsReauth || settings.tokenDaysLeft <= 0
-            ? "bg-red-50 border-red-200"
-            : "bg-yellow-50 border-yellow-200"
-        }`}>
-          <AlertTriangle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
-            settings.tokenDaysLeft <= 0 ? "text-red-500" : "text-yellow-500"
-          }`} />
+      {/* Token warning — only shown when auto-refresh failed */}
+      {settings.needsReauth && (
+        <div className="flex items-start gap-3 p-4 rounded-xl border bg-red-50 border-red-200">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5 text-red-500" />
           <div>
             <p className="text-sm font-semibold text-gray-800">
-              {settings.tokenDaysLeft <= 0
-                ? "Токен AmoCRM истёк — требуется повторная авторизация"
-                : `Токен AmoCRM истекает через ${settings.tokenDaysLeft} дней`}
+              Токен AmoCRM истёк — требуется повторная авторизация
             </p>
             <p className="text-xs text-gray-500 mt-0.5">
               Переподключите аккаунт через{" "}
@@ -143,7 +135,6 @@ export default function SettingsPage() {
           <Info label="Субдомен" value={settings.subdomain} />
           <Info label="Название" value={settings.name ?? "—"} />
           <Info label="Статус синхронизации" value={settings.syncStatus} />
-          <Info label="Токен истекает" value={`через ${settings.tokenDaysLeft} дней`} />
         </div>
         {isAdmin && (
           <button
