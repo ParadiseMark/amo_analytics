@@ -63,8 +63,8 @@ async function tryRefresh(): Promise<boolean> {
     });
     if (!res.ok) return false;
     const { accessToken, refreshToken: newRefresh } = await res.json();
-    Cookies.set("access_token", accessToken, { expires: 1 / 96 }); // 15 min
-    Cookies.set("refresh_token", newRefresh, { expires: 30 });
+    Cookies.set("access_token", accessToken, { expires: 1 / 96, sameSite: "Lax", secure: true });
+    Cookies.set("refresh_token", newRefresh, { expires: 30, sameSite: "Lax", secure: true });
     return true;
   } catch {
     return false;

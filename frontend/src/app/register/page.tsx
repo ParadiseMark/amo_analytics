@@ -36,8 +36,8 @@ export default function RegisterPage() {
         user: { id: string; email: string };
       };
 
-      Cookies.set("access_token", data.accessToken, { expires: 1 / 96 });
-      Cookies.set("refresh_token", data.refreshToken, { expires: 30 });
+      Cookies.set("access_token", data.accessToken, { expires: 1 / 96, sameSite: "Lax", secure: true });
+      Cookies.set("refresh_token", data.refreshToken, { expires: 30, sameSite: "Lax", secure: true });
 
       router.push("/dashboard");
     } catch {

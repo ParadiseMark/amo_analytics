@@ -35,8 +35,8 @@ export default function LoginPage() {
         user: { id: string; email: string };
       };
 
-      Cookies.set("access_token", data.accessToken, { expires: 1 / 96 }); // 15 min
-      Cookies.set("refresh_token", data.refreshToken, { expires: 30 });
+      Cookies.set("access_token", data.accessToken, { expires: 1 / 96, sameSite: "Lax", secure: true });
+      Cookies.set("refresh_token", data.refreshToken, { expires: 30, sameSite: "Lax", secure: true });
 
       router.push("/dashboard");
     } catch {
