@@ -57,7 +57,7 @@ export function createSyncWorker(accountId: string): Worker<FullSyncJobData | In
       }
       return processJob(job as import("bullmq").Job<FullSyncJobData>);
     },
-    { connection: redis, concurrency: WORKER_CONCURRENCY }
+    { connection: redis, concurrency: WORKER_CONCURRENCY, stalledInterval: 300_000, lockDuration: 600_000 }
   );
 
   worker.on("failed", (job, err) => {
