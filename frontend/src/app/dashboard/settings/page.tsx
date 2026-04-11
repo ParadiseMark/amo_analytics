@@ -78,7 +78,7 @@ export default function SettingsPage() {
   });
 
   const syncMutation = useMutation({
-    mutationFn: () => api.post(`/accounts/${accountId}/sync/trigger`),
+    mutationFn: () => api.post(`/accounts/${accountId}/sync/trigger`, {}),
   });
 
   function handleSave() {
